@@ -1344,6 +1344,7 @@ void PetscVector<T>::swap (NumericVector<T> &other)
 }
 
 
+extern Threads::spin_mutex _petsc_vector_get_array_spin_mutex;
 
 template <typename T>
 inline
@@ -1352,39 +1353,40 @@ void PetscVector<T>::_get_array(void) const
   libmesh_assert (this->initialized());
   if(!_array_is_present)
     {
-      PetscErrorCode ierr=0;
-      if(this->type() != GHOSTED)
+      Threads::spin_mutex::scoped_lock(_petsc_vector_get_array_spin_mutex);
+      if (!_array_is_present)
         {
-          ierr = VecGetArray(_vec, &_values);
-          LIBMESH_CHKERRABORT(ierr);
-        }
-      else
-        {
-          ierr = VecGhostGetLocalForm (_vec,&_local_form);
-          LIBMESH_CHKERRABORT(ierr);
-          ierr = VecGetArray(_local_form, &_values);
-          LIBMESH_CHKERRABORT(ierr);
+          PetscErrorCode ierr=0;
+          if(this->type() != GHOSTED)
+            {
+              ierr = VecGetArray(_vec, &_values);
+              LIBMESH_CHKERRABORT(ierr);
+            }
+          else
+            {
+              ierr = VecGhostGetLocalForm (_vec,&_local_form);
+              LIBMESH_CHKERRABORT(ierr);
+              ierr = VecGetArray(_local_form, &_values);
+              LIBMESH_CHKERRABORT(ierr);
 #ifndef NDEBUG
-          PetscInt my_local_size = 0;
-          ierr = VecGetLocalSize(_local_form, &my_local_size);
-          LIBMESH_CHKERRABORT(ierr);
-          _local_size = static_cast<numeric_index_type>(my_local_size);
+              PetscInt my_local_size = 0;
+              ierr = VecGetLocalSize(_local_form, &my_local_size);
+              LIBMESH_CHKERRABORT(ierr);
+              _local_size = static_cast<numeric_index_type>(my_local_size);
 #endif
+            }
+
+          { // cache ownership range
+            PetscInt petsc_first=0, petsc_last=0;
+            ierr = VecGetOwnershipRange (_vec, &petsc_first, &petsc_last);
+            LIBMESH_CHKERRABORT(ierr);
+            _first = static_cast<numeric_index_type>(petsc_first);
+            _last = static_cast<numeric_index_type>(petsc_last);
+          }
+          _array_is_present = true;
         }
-
-      { // cache ownership range
-        PetscInt petsc_first=0, petsc_last=0;
-        ierr = VecGetOwnershipRange (_vec, &petsc_first, &petsc_last);
-        LIBMESH_CHKERRABORT(ierr);
-        _first = static_cast<numeric_index_type>(petsc_first);
-        _last = static_cast<numeric_index_type>(petsc_last);
-      }
-
-      _array_is_present = true;
     }
 }
-
-
 
 template <typename T>
 inline
