@@ -541,6 +541,10 @@ public:
    */
   Vec vec () { libmesh_assert (_vec); return _vec; }
 
+  /**
+   * Performs caching of data to provide a means of operator() to be thread-safe.
+   */
+  void cache_data();
 
 
 private:
@@ -563,14 +567,14 @@ private:
    *
    * Only valid when _array_is_present
    */
-  mutable numeric_index_type _first;
+  numeric_index_type _first;
 
   /**
    * Last local index.
    *
    * Only valid when _array_is_present
    */
-  mutable numeric_index_type _last;
+  numeric_index_type _last;
 
 #ifndef NDEBUG
   /**
@@ -593,12 +597,6 @@ private:
    * This pointer is only valid if \p _array_is_present is \p true.
    */
   mutable PetscScalar* _values;
-
-  /**
-   * Queries the array (and the local form if the vector is ghosted)
-   * from Petsc.
-   */
-  void _get_array(void) const;
 
   /**
    * Restores the array (and the local form if the vector is ghosted)
@@ -996,6 +994,7 @@ void PetscVector<T>::close ()
       LIBMESH_CHKERRABORT(ierr);
     }
 
+  this->cache_data();
   this->_is_closed = true;
 }
 
@@ -1249,7 +1248,10 @@ template <typename T>
 inline
 T PetscVector<T>::operator() (const numeric_index_type i) const
 {
-  this->_get_array();
+  libmesh_assert (this->initialized());
+
+  if (!this->_array_is_present)
+    libmesh_error_msg("ERROR: You must call close() before using operator()");
 
   const numeric_index_type local_index = this->map_global_to_local_index(i);
 
@@ -1269,7 +1271,10 @@ template <typename T>
 inline
 void PetscVector<T>::get(const std::vector<numeric_index_type>& index, std::vector<T>& values) const
 {
-  this->_get_array();
+  libmesh_assert (this->initialized());
+
+  if (!this->_array_is_present)
+    libmesh_error_msg("ERROR: You must call close() before using get()");
 
   const std::size_t num = index.size();
   values.resize(num);
@@ -1293,7 +1298,8 @@ template <typename T>
 inline
 Real PetscVector<T>::min () const
 {
-  this->_restore_array();
+  if (!this->_array_is_present)
+    libmesh_error_msg("ERROR: You must call close() before using min()");
 
   PetscErrorCode ierr=0;
   PetscInt index=0;
@@ -1312,7 +1318,8 @@ template <typename T>
 inline
 Real PetscVector<T>::max() const
 {
-  this->_restore_array();
+  if (!this->_array_is_present)
+    libmesh_error_msg("ERROR: You must call close() before using max()");
 
   PetscErrorCode ierr=0;
   PetscInt index=0;
@@ -1343,48 +1350,40 @@ void PetscVector<T>::swap (NumericVector<T> &other)
   std::swap(_values, v._values);
 }
 
-
-extern Threads::spin_mutex _petsc_vector_get_array_spin_mutex;
-
 template <typename T>
 inline
-void PetscVector<T>::_get_array(void) const
+void PetscVector<T>::cache_data()
 {
-  libmesh_assert (this->initialized());
   if(!_array_is_present)
     {
-      Threads::spin_mutex::scoped_lock(_petsc_vector_get_array_spin_mutex);
-      if (!_array_is_present)
-        {
-          PetscErrorCode ierr=0;
-          if(this->type() != GHOSTED)
-            {
-              ierr = VecGetArray(_vec, &_values);
-              LIBMESH_CHKERRABORT(ierr);
-            }
-          else
-            {
-              ierr = VecGhostGetLocalForm (_vec,&_local_form);
-              LIBMESH_CHKERRABORT(ierr);
-              ierr = VecGetArray(_local_form, &_values);
-              LIBMESH_CHKERRABORT(ierr);
+      PetscErrorCode ierr=0;
+      if(this->type() != GHOSTED)
+      {
+        ierr = VecGetArray(_vec, &_values);
+        LIBMESH_CHKERRABORT(ierr);
+      }
+      else
+      {
+        ierr = VecGhostGetLocalForm (_vec,&_local_form);
+        LIBMESH_CHKERRABORT(ierr);
+        ierr = VecGetArray(_local_form, &_values);
+        LIBMESH_CHKERRABORT(ierr);
 #ifndef NDEBUG
-              PetscInt my_local_size = 0;
-              ierr = VecGetLocalSize(_local_form, &my_local_size);
-              LIBMESH_CHKERRABORT(ierr);
-              _local_size = static_cast<numeric_index_type>(my_local_size);
+        PetscInt my_local_size = 0;
+        ierr = VecGetLocalSize(_local_form, &my_local_size);
+        LIBMESH_CHKERRABORT(ierr);
+        _local_size = static_cast<numeric_index_type>(my_local_size);
 #endif
-            }
+      }
 
-          { // cache ownership range
-            PetscInt petsc_first=0, petsc_last=0;
-            ierr = VecGetOwnershipRange (_vec, &petsc_first, &petsc_last);
-            LIBMESH_CHKERRABORT(ierr);
-            _first = static_cast<numeric_index_type>(petsc_first);
-            _last = static_cast<numeric_index_type>(petsc_last);
-          }
-          _array_is_present = true;
-        }
+      { // cache ownership range
+        PetscInt petsc_first=0, petsc_last=0;
+        ierr = VecGetOwnershipRange (_vec, &petsc_first, &petsc_last);
+        LIBMESH_CHKERRABORT(ierr);
+        _first = static_cast<numeric_index_type>(petsc_first);
+        _last = static_cast<numeric_index_type>(petsc_last);
+      }
+        _array_is_present = true;
     }
 }
 

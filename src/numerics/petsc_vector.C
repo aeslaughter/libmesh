@@ -34,9 +34,6 @@
 namespace libMesh
 {
 
-// Spin mutex for providing lock in _get_array
-Threads::spin_mutex _petsc_vector_get_array_spin_mutex;
-
 //-----------------------------------------------------------------------
 // PetscVector members
 

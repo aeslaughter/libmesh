@@ -645,6 +645,15 @@ public:
    */
   virtual void swap (NumericVector<T> &v);
 
+
+  /**
+   * A method for caching data prior to use of operator(), see PetscVector
+   */
+  virtual void cache_data() const
+  {
+    libmesh_not_implemented();
+  }
+
 protected:
 
   /**
